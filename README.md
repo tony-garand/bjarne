@@ -130,6 +130,16 @@ bjarne 50
 | `specs/` | Detailed specifications |
 | `.task` | Current task state (temporary) |
 
+## Standing on the Shoulders of Ralph
+
+Bjarne is inspired by the [Ralph Wiggum technique](https://ghuntley.com/ralph/), created by [Geoffrey Huntley](https://ghuntley.com/) — a goat farmer in rural Australia who proved that "dumb things can work surprisingly well."
+
+The original Ralph was beautifully simple: a bash loop that keeps running Claude until the job is done. Geoffrey once ran it for three months straight and woke up to a fully functional programming language with Gen Z slang keywords (`slay` for function, `sus` for variable, `based` for true).
+
+Bjarne adds structure to the chaos — task planning, code review, and fix cycles — but the spirit is the same: *naive persistence wins*.
+
+Thanks Geoffrey. Your goats would be proud.
+
 ## License
 
 MIT
