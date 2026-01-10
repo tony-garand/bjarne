@@ -109,9 +109,16 @@ Your job: Create project structure that SUPPORTS the user's vision.
 ## Phase 2: Infer Missing Pieces (only if not specified)
 For anything the user didn't specify, make smart choices:
 - Tech stack: Use detected, or pick appropriate for project type
-- Testing: Default to basic tests unless user says otherwise
 - Architecture: Simple and appropriate for scope (or follow existing patterns)
 - Scope: Take idea at face value - don't expand or reduce
+
+## Testing Principle: IF YOU CAN'T TEST IT, BUILD A WAY TO TEST IT
+Unless user explicitly says "no tests", you MUST include testing:
+- Add test framework setup task early (jest, pytest, vitest, etc.)
+- Include test tasks for each major feature
+- Tests enable the REVIEW step to verify work automatically
+- Without tests, the feedback loop is blind
+- Even simple projects benefit from basic smoke tests
 
 ## Phase 3: Create Files
 
@@ -454,6 +461,12 @@ Based on what was implemented, check relevant areas:
 
 ## Run Checks
 Use TEST_COMMAND from .task file (or detect from CONTEXT.md)
+
+## Testing is Critical for Feedback Loop
+- If no tests exist yet, flag as 🟡 ISSUE: "No tests - add test for this feature"
+- If tests exist but don't cover new code, flag as 🟡 ISSUE: "Add test coverage"
+- Tests let you VERIFY the implementation works - without them you're blind
+- A feature without tests is not truly complete
 
 ## Classify Issues by Severity
 - 🔴 BLOCKER: Security vulnerabilities, data loss risk, crashes
