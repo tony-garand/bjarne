@@ -1212,10 +1212,15 @@ Instead of picking only the FIRST unchecked task, you should:
 Write to .task file with format:
 \`\`\`
 TASKS: [list the related tasks you're tackling together]
+EXPECTED_OUTCOMES:
+- [outcome for task 1]
+- [outcome for task 2]
 ...rest of plan format...
 \`\`\`
 
-When done, mark ALL completed tasks with [x] in the subtasks file.
+**REVIEW phase**: Verify ALL outcomes for the batched tasks, review ALL code changes together.
+**FIX phase**: Fix issues across ALL changes from the batch.
+**When done**: Mark ALL completed tasks with [x] in the subtasks file.
 
 "
 
