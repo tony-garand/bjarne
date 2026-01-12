@@ -199,9 +199,13 @@ bjarne task "Fix the login button not responding"
 bjarne task "description"              # Text description
 bjarne task bugfix.md                  # Auto-detects file, reads contents
 bjarne task --safe "description"       # Run in Docker sandbox
-bjarne task --branch feature/foo "..." # Custom branch name
 bjarne task --no-pr "..."              # Skip PR creation
 bjarne task -n 10 "..."                # Limit to 10 iterations
+```
+
+**Specifying branch name:** Include it in the task description:
+```bash
+bjarne task "Add OAuth support. Use branch feature/oauth"
 ```
 
 **When to use task mode vs regular mode:**

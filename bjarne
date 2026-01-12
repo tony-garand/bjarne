@@ -975,8 +975,6 @@ if [[ "$1" == "task" ]]; then
     # Parse task command arguments
     TASK_SAFE_MODE=false
     TASK_DESCRIPTION=""
-    TASK_FILE_INPUT=""
-    TASK_BRANCH_OVERRIDE=""
     TASK_NO_PR=false
     TASK_MAX_ITERATIONS=25
 
@@ -985,14 +983,6 @@ if [[ "$1" == "task" ]]; then
             --safe)
                 TASK_SAFE_MODE=true
                 shift
-                ;;
-            -f|--file)
-                TASK_FILE_INPUT="$2"
-                shift 2
-                ;;
-            --branch)
-                TASK_BRANCH_OVERRIDE="$2"
-                shift 2
                 ;;
             --no-pr)
                 TASK_NO_PR=true
@@ -1010,26 +1000,19 @@ if [[ "$1" == "task" ]]; then
         esac
     done
 
-    # Auto-detect: if -f was used OR if description is an existing file, read it
-    if [[ -n "$TASK_FILE_INPUT" ]]; then
-        if [[ ! -f "$TASK_FILE_INPUT" ]]; then
-            echo -e "${RED}Error: Task file '$TASK_FILE_INPUT' not found${NC}"
-            exit 1
-        fi
-        TASK_DESCRIPTION=$(cat "$TASK_FILE_INPUT")
-    elif [[ -n "$TASK_DESCRIPTION" ]] && [[ -f "$TASK_DESCRIPTION" ]]; then
-        # Description is actually a file path - read it
+    # Auto-detect: if description is an existing file, read it
+    if [[ -n "$TASK_DESCRIPTION" ]] && [[ -f "$TASK_DESCRIPTION" ]]; then
         TASK_DESCRIPTION=$(cat "$TASK_DESCRIPTION")
     fi
 
     if [[ -z "$TASK_DESCRIPTION" ]]; then
-        echo -e "${RED}Usage: bjarne task [--safe] [--branch name] [--no-pr] [-n iterations] <description or file.md>${NC}"
+        echo -e "${RED}Usage: bjarne task [--safe] [--no-pr] [-n iterations] <description or file.md>${NC}"
         echo ""
         echo "Examples:"
         echo "  bjarne task \"Fix the login button not responding\""
-        echo "  bjarne task bugfix.md                    # auto-detects file"
+        echo "  bjarne task bugfix.md                      # reads file as task"
         echo "  bjarne task --safe \"Add payment integration\""
-        echo "  bjarne task --branch feature/oauth \"Add OAuth support\""
+        echo "  bjarne task \"Add OAuth, use branch feature/oauth\"  # branch in description"
         exit 1
     fi
 
@@ -1069,23 +1052,11 @@ if [[ "$1" == "task" ]]; then
     task_log "INFO" "Task: $TASK_DESCRIPTION"
     task_log "INFO" "Task ID: $TASK_ID"
 
-    # Save original branch if git available
+    # Track original branch if git available (Claude will handle branch creation)
     ORIGINAL_BRANCH=""
     if [[ "$HAS_GIT" == "1" ]]; then
         ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        task_log "INFO" "Original branch: $ORIGINAL_BRANCH"
-
-        # Create feature branch
-        BRANCH_NAME="${TASK_BRANCH_OVERRIDE:-task/$TASK_ID}"
-        echo -e "  Creating branch: $BRANCH_NAME"
-
-        if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
-            echo -e "${YELLOW}  Branch '$BRANCH_NAME' already exists, using it${NC}"
-            git checkout "$BRANCH_NAME"
-        else
-            git checkout -b "$BRANCH_NAME"
-        fi
-        task_log "INFO" "Working branch: $BRANCH_NAME"
+        task_log "INFO" "Starting branch: $ORIGINAL_BRANCH"
     fi
 
     # Handle safe mode for task
@@ -1146,6 +1117,15 @@ CRITICAL: You are working on an EXISTING project. Do NOT delete any source files
 configuration files, or project files. Only modify files directly related to this task.
 The project's existing files are NOT bjarne artifacts - do NOT remove them.
 
+## Git Workflow (if git available)
+1. **First subtask should create a feature branch** (unless task specifies otherwise)
+   - Use branch name from task description if provided
+   - Otherwise use a descriptive name like `feature/short-description` or `fix/short-description`
+2. Commits happen during EXECUTE phase
+3. PR creation happens at the end (handled by bjarne)
+
+If the task description includes specific git instructions (branch name, workflow), follow those.
+
 ## Instructions
 1. Explore the codebase to understand the relevant code
 2. Break this into discrete subtasks (or keep as one if simple enough)
@@ -1158,7 +1138,7 @@ Each line must be: `- [ ] Action → Outcome`
 - Outcome: How to verify it worked (must be machine-checkable)
 
 ## Examples
-- [ ] Find login button component → Located in src/components/
+- [ ] Create feature branch `feature/login-fix` → Branch exists and is checked out
 - [ ] Add onClick handler to login button → Button calls handleLogin function when clicked
 - [ ] Test login flow → Clicking login button redirects to /dashboard
 
@@ -1281,126 +1261,83 @@ $FIX_PROMPT" "TASK_FIX"; then
     done
 
     #--------------------------------------------------------------------------
-    # FINALIZE - Generate summary and create PR
+    # FINALIZE - Push, create PR, generate summary (Claude handles git workflow)
     #--------------------------------------------------------------------------
     echo ""
-    echo -e "${CYAN}Finalizing task...${NC}"
+    echo -e "${CYAN}[FINALIZE]${NC} Wrapping up task..."
 
-    # Count completed subtasks (grep -c returns 0 on no match but exits non-zero, so we need || true)
-    COMPLETED_COUNT=$(grep -c '^\s*- \[x\]' "$TASK_SUBTASKS" 2>/dev/null) || COMPLETED_COUNT=0
-    REMAINING_COUNT=$(grep -c '^\s*- \[ \]' "$TASK_SUBTASKS" 2>/dev/null) || REMAINING_COUNT=0
+    # Build finalize prompt
+    read -r -d '' FINALIZE_PROMPT << 'FINALIZE_EOF' || true
+# FINALIZE TASK
 
-    # Generate summary
-    SUMMARY="# Task Summary
+The task loop has completed. Now finalize the work:
 
-## Original Task
-$TASK_DESCRIPTION
+## Your Actions
 
-## Results
-- Completed subtasks: $COMPLETED_COUNT
-- Remaining subtasks: $REMAINING_COUNT
-"
+1. **Check git status**
+   - What branch are you on?
+   - Are there uncommitted changes? If so, commit them.
+   - Are there commits to push?
 
-    if [[ "$HAS_GIT" == "1" ]]; then
-        # Get git diff stats
-        DIFF_STAT=$(git diff "$ORIGINAL_BRANCH"..HEAD --stat 2>/dev/null || echo "No changes")
-        COMMIT_LOG=$(git log "$ORIGINAL_BRANCH"..HEAD --oneline 2>/dev/null || echo "No commits")
+2. **Push if on a feature branch**
+   - If you created a feature branch and have commits, push it: `git push -u origin <branch>`
+   - If push fails (no remote, auth issues), just note it and continue
 
-        SUMMARY+="
-## Changes
-\`\`\`
-$DIFF_STAT
-\`\`\`
+3. **Create PR if appropriate**
+   - Only if: on a feature branch, pushed successfully, `gh` CLI is available
+   - Check if PR already exists: `gh pr list --head <branch>`
+   - If no PR exists, create one with a good title and description
+   - Include what was changed and how to test it
 
-## Commits
-\`\`\`
-$COMMIT_LOG
-\`\`\`
-"
+4. **Return to original branch**
+   - Switch back to the starting branch
+
+5. **Output summary**
+   - List what was accomplished
+   - Note any issues or incomplete items
+   - Include PR URL if created
+
+## Constraints
+FINALIZE_EOF
+
+    # Add no-pr constraint if flag set
+    if [[ "$TASK_NO_PR" == true ]]; then
+        FINALIZE_PROMPT+="
+- Do NOT create a pull request (--no-pr flag was set)"
     fi
 
-    SUMMARY+="
-## Subtasks
-$(cat "$TASK_SUBTASKS")
+    # Add context about original branch
+    FINALIZE_PROMPT+="
+- Original branch was: $ORIGINAL_BRANCH
+- Subtasks file: $TASK_SUBTASKS
+
+## Subtasks Status
+$(cat "$TASK_SUBTASKS" 2>/dev/null || echo "No subtasks file found")
 "
 
-    echo "$SUMMARY" > "$TASK_SUMMARY_FILE"
+    # Run finalize phase
+    if ! run_claude "$FINALIZE_PROMPT" "FINALIZE"; then
+        echo -e "${YELLOW}Finalize phase had issues - check output above${NC}"
+    fi
 
-    # Output summary
+    # Return to original branch (safety fallback in case Claude didn't)
+    if [[ "$HAS_GIT" == "1" ]]; then
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [[ "$CURRENT_BRANCH" != "$ORIGINAL_BRANCH" ]]; then
+            git checkout "$ORIGINAL_BRANCH" 2>/dev/null
+        fi
+    fi
+
+    # Output completion
     echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}TASK COMPLETE${NC}"
     echo -e "${GREEN}========================================${NC}"
-    echo ""
-    echo -e "Completed: $COMPLETED_COUNT subtasks"
-    echo -e "Remaining: $REMAINING_COUNT subtasks"
-
-    if [[ "$HAS_GIT" == "1" ]]; then
-        echo -e "Branch: $BRANCH_NAME"
-
-        # Check if there are actual changes to push
-        COMMIT_COUNT=$(git rev-list "$ORIGINAL_BRANCH"..HEAD --count 2>/dev/null || echo "0")
-
-        if [[ "$COMMIT_COUNT" -gt 0 ]]; then
-            # Push branch
-            echo -e "\n${CYAN}Pushing branch to remote...${NC}"
-            if git push -u origin "$BRANCH_NAME" 2>/dev/null; then
-                echo -e "${GREEN}Branch pushed successfully${NC}"
-
-                # Create PR if gh available and not --no-pr
-                if [[ "$HAS_GH" == "1" ]] && [[ "$TASK_NO_PR" != true ]]; then
-                    echo -e "\n${CYAN}Creating pull request...${NC}"
-
-                    PR_TITLE="[Bjarne Task] $(echo "$TASK_DESCRIPTION" | head -c 60)"
-                    PR_BODY="## Summary
-$TASK_DESCRIPTION
-
-## Changes
-- Completed $COMPLETED_COUNT subtask(s)
-
-## Subtasks
-$(cat "$TASK_SUBTASKS")
-
----
-*Generated by bjarne task mode*"
-
-                    if PR_URL=$(gh pr create --title "$PR_TITLE" --body "$PR_BODY" 2>/dev/null); then
-                        echo -e "${GREEN}Pull request created: $PR_URL${NC}"
-                    else
-                        echo -e "${YELLOW}Could not create PR (may already exist or no remote)${NC}"
-                        echo -e "Create manually: gh pr create --title \"$PR_TITLE\""
-                    fi
-                elif [[ "$TASK_NO_PR" == true ]]; then
-                    echo -e "\n${YELLOW}Skipping PR creation (--no-pr flag)${NC}"
-                else
-                    echo -e "\n${YELLOW}GitHub CLI not available - create PR manually:${NC}"
-                    echo -e "  gh pr create --title \"[Bjarne Task] $TASK_DESCRIPTION\""
-                fi
-            else
-                echo -e "${YELLOW}Could not push branch (no remote or access denied)${NC}"
-            fi
-        else
-            echo -e "${YELLOW}No commits made - nothing to push${NC}"
-        fi
-
-        # Return to original branch
-        echo -e "\n${CYAN}Returning to original branch: $ORIGINAL_BRANCH${NC}"
-        git checkout "$ORIGINAL_BRANCH" 2>/dev/null
-    else
-        echo -e "\n${YELLOW}Git not available - changes made to working directory only${NC}"
-    fi
 
     # Cleanup task state directory
     echo -e "\n${CYAN}Cleaning up task state...${NC}"
     rm -rf "$TASK_DIR"
-    echo -e "${GREEN}Task state cleaned up${NC}"
-
-    # Final summary output
-    echo ""
-    echo -e "${GREEN}Task Summary:${NC}"
-    echo "---"
-    echo "$SUMMARY"
-    echo "---"
+    echo -e "${GREEN}Done${NC}"
     exit 0
 fi
 
