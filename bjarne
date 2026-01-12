@@ -1185,18 +1185,33 @@ $DECOMPOSE_PROMPT"
     #--------------------------------------------------------------------------
 
     # Build task mode context header (injected before each prompt)
-    TASK_MODE_HEADER="## TASK MODE - Isolated Single Fix
+    TASK_MODE_HEADER="## TASK MODE - Isolated Fix
 
 **File Mappings (read these instead of defaults):**
 - TASKS.md → $TASK_SUBTASKS
 - .task → $TASK_STATE_FILE
 
 **Task Mode Rules:**
-- You are fixing ONE specific thing in an EXISTING project
-- Do NOT delete any project source files - only modify what's needed for this task
+- You are fixing a specific thing in an EXISTING project
+- Do NOT delete any project source files - only modify what's needed
 - Do NOT create new test infrastructure if none exists
 - If tests exist and this change naturally fits, add/update tests
 - If no tests exist, outcome verification (grep, curl, file check) is sufficient
+
+**IMPORTANT - Batch Related Tasks:**
+Instead of picking only the FIRST unchecked task, you should:
+1. Look at ALL unchecked tasks in the subtasks file
+2. Identify a logical GROUP of related/coupled tasks (e.g., all methods in one class, all changes to one file, all tightly coupled changes)
+3. Plan and execute them TOGETHER in one iteration
+4. This reduces redundant exploration and keeps related changes atomic
+
+Write to .task file with format:
+\`\`\`
+TASKS: [list the related tasks you're tackling together]
+...rest of plan format...
+\`\`\`
+
+When done, mark ALL completed tasks with [x] in the subtasks file.
 
 "
 
