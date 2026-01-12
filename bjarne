@@ -663,10 +663,17 @@ This is an EXISTING project. You MUST:
     fi
 
     read -r -d '' INIT_PROMPT << 'INIT_EOF' || true
-# PROJECT INITIALIZATION
+# PROJECT INITIALIZATION (Planning Only)
 
 You have an idea file (freeform, any format) and detected environment info.
-Your job: Create project structure that SUPPORTS the user's vision.
+Your job: Create PLANNING FILES only (CONTEXT.md, TASKS.md, specs/).
+
+## CRITICAL: This is a PLANNING phase, NOT implementation
+- You create the roadmap, the PLAN→EXECUTE→REVIEW→FIX loop builds it
+- DO NOT write any source code, HTML, CSS, JavaScript, Python, etc.
+- DO NOT create the actual project files (index.html, app.py, main.js, etc.)
+- ONLY create: CONTEXT.md, TASKS.md, and specs/*.md files
+- The tasks you create will be implemented one-by-one in the dev loop
 
 ## Core Principle: RESPECT THE IDEA
 - User's idea is the source of truth - don't change their concept
@@ -749,14 +756,16 @@ Create specs that ADD VALUE - don't create empty scaffolds:
 - Skip specs that would just repeat the idea
 
 ## What NOT to Do
+- **DO NOT write implementation code** - no source files, no index.html, no app.py, etc.
 - Don't add features the user didn't ask for
 - Don't create specs that just restate obvious things
 - Don't expand scope beyond what they described
 - Don't change their architectural choices if specified
 - Don't add "nice to have" tasks - stick to the idea
+- Don't create tasks for "start server" or other manual user actions
 - **For existing projects**: Don't recreate what already exists!
 
-Read the idea, understand the vision, build the support structure.
+Read the idea, understand the vision, create the planning files. Implementation happens later.
 INIT_EOF
 
     IDEA_CONTENT=$(cat "$IDEA_FILE")
