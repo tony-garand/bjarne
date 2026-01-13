@@ -119,10 +119,16 @@ You are planning ONE task from TASKS.md.
 ## Your Job
 1. Read CONTEXT.md for project info and commands
 2. Read TASKS.md - find the FIRST unchecked `- [ ]` task
+   - **CRITICAL**: Only plan tasks marked `- [ ]` (unchecked)
+   - Skip any task marked `- [x]` (already complete)
 3. **Parse the task**: Extract ACTION and OUTCOME (format: `Action → Outcome`)
 4. Read specs/ folder for detailed specifications
 5. Search the codebase for existing patterns, utilities, components
 6. Write a plan to .task file
+
+## STOP: Verify Task Is Actually Unchecked
+Before planning, CONFIRM the task line starts with `- [ ]` (space between brackets).
+If it starts with `- [x]`, it's ALREADY DONE - do not plan it, do not create .task file.
 
 ## Write to .task file:
 ```
