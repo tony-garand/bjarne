@@ -53,6 +53,22 @@ LOG_FILE="$LOG_DIR/bjarne.log"
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
+# Instance-specific temp folder for verbose command output
+# Uses PID + timestamp for uniqueness across concurrent instances
+BJARNE_INSTANCE_ID="$$_$(date +%s)"
+BJARNE_TMP_DIR="/tmp/bjarne-${BJARNE_INSTANCE_ID}"
+mkdir -p "$BJARNE_TMP_DIR"
+
+# Cleanup function for temp folder
+cleanup_temp() {
+    if [[ -d "$BJARNE_TMP_DIR" ]]; then
+        rm -rf "$BJARNE_TMP_DIR"
+    fi
+}
+
+# Trap signals to ensure cleanup on exit (normal, interrupt, terminate)
+trap cleanup_temp EXIT INT TERM
+
 # Log function
 log() {
     local level="$1"
@@ -398,6 +414,61 @@ If TRUE code blocker (rare - only security/data issues with no fix):
 FIX_EOF
 
 #==============================================================================
+# VERBOSE OUTPUT RULES - Injected into all prompts to save tokens
+#==============================================================================
+
+# Generate verbose output rules with current temp folder path
+get_verbose_output_rules() {
+    cat << VERBOSE_EOF
+
+## MANDATORY: Verbose Command Output Redirection
+
+**YOU MUST FOLLOW THESE RULES. NO EXCEPTIONS.**
+
+**Log folder for this session**: $BJARNE_TMP_DIR
+
+### MANDATORY REDIRECTION - You MUST redirect these commands:
+- **Package managers**: npm, yarn, pnpm, pip, pip3, cargo, go get/build, composer, bundle, maven, gradle, apt, brew
+- **Build tools**: webpack, vite, tsc, esbuild, rollup, make, cmake, msbuild, gcc, g++, rustc, javac
+- **Container tools**: docker build, docker pull, docker run, docker-compose
+- **Test runners**: npm test, yarn test, jest, pytest, cargo test, go test, phpunit, rspec, mocha, vitest
+- **Database tools**: migrations, db:push, db:pull, prisma, drizzle, typeorm, sequelize
+- **Linters/Formatters**: eslint, prettier, black, flake8, clippy
+
+### REQUIRED PATTERN - Use this exact format:
+\`\`\`bash
+# CORRECT - redirect and show exit code:
+npm install > $BJARNE_TMP_DIR/install.log 2>&1; echo "Exit code: \$?"
+npm test > $BJARNE_TMP_DIR/test.log 2>&1; echo "Exit code: \$?"
+npm run build > $BJARNE_TMP_DIR/build.log 2>&1; echo "Exit code: \$?"
+cargo build > $BJARNE_TMP_DIR/build.log 2>&1; echo "Exit code: \$?"
+pytest > $BJARNE_TMP_DIR/test.log 2>&1; echo "Exit code: \$?"
+
+# WRONG - never do this:
+npm install          # FORBIDDEN
+npm test             # FORBIDDEN
+cargo build          # FORBIDDEN
+\`\`\`
+
+### After running, check results with:
+\`\`\`bash
+# If exit code was 0, check last few lines to confirm:
+tail -20 $BJARNE_TMP_DIR/test.log
+
+# If exit code was non-zero, find errors:
+grep -i "error\|fail\|exception" $BJARNE_TMP_DIR/test.log | head -30
+\`\`\`
+
+### Commands that DON'T need redirection:
+- \`ls\`, \`cat\`, \`head\`, \`tail\`, \`grep\`, \`find\`
+- \`git status\`, \`git diff\`, \`git log\` (short output)
+- \`node script.js\` (when output is expected to be < 10 lines)
+- File reads and quick checks
+
+VERBOSE_EOF
+}
+
+#==============================================================================
 # SAFE MODE FUNCTIONS
 #==============================================================================
 
@@ -551,11 +622,16 @@ generate_task_id() {
 # Run claude with retry logic (safe mode aware)
 # Usage: run_claude "prompt" "PHASE_NAME"
 run_claude() {
-    local prompt="$1"
+    local user_prompt="$1"
     local phase="${2:-UNKNOWN}"
     local attempt=1
     local exit_code
     local output
+
+    # APPEND verbose output rules to ALL prompts (at end = more prominent)
+    local prompt="$user_prompt
+
+$(get_verbose_output_rules)"
     local prompt_size=${#prompt}
 
     log "INFO" "Starting $phase phase (prompt: $prompt_size bytes)"
@@ -581,6 +657,9 @@ run_claude() {
             if [[ -n "$dep_volume" ]]; then
                 docker_args+=" -v $dep_volume"
             fi
+
+            # Mount temp folder for verbose output logs (same path inside container)
+            docker_args+=" -v $BJARNE_TMP_DIR:$BJARNE_TMP_DIR"
 
             # Capture both stdout and stderr
             # Run as host user's UID/GID so mounted files have correct permissions
