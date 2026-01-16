@@ -26,12 +26,31 @@ Bjarne reads your idea, creates a task list, then loops through each task autono
 ## Install
 
 ```bash
-sudo curl -o /usr/local/bin/bjarne https://raw.githubusercontent.com/Dekadinious/bjarne/main/bjarne && sudo chmod +x /usr/local/bin/bjarne
+sudo curl -o /usr/local/bin/bjarne https://raw.githubusercontent.com/Dekadinious/bjarne/master/bjarne && sudo chmod +x /usr/local/bin/bjarne
 ```
 
 Or just give Claude this repo and ask it to set things up:
 ```
 Install bjarne from https://github.com/Dekadinious/bjarne
+```
+
+### Auto-Update
+
+Bjarne checks for updates every 2 days and prompts you to install if a new version is available:
+
+```
+A new version of bjarne is available.
+Do you want to update? [y/N]
+```
+
+To disable auto-update checks:
+```bash
+bjarne --disable-auto-update
+```
+
+To re-enable:
+```bash
+bjarne --enable-auto-update
 ```
 
 ## Commands
@@ -45,6 +64,8 @@ Install bjarne from https://github.com/Dekadinious/bjarne
 | `bjarne refresh notes.md` | Add tasks from feedback notes |
 | `bjarne task "description"` | Run isolated single-task fix |
 | `bjarne --rebuild` | Rebuild Docker image (safe mode) |
+| `bjarne --disable-auto-update` | Disable automatic update checks |
+| `bjarne --enable-auto-update` | Re-enable automatic update checks |
 
 ## Usage
 

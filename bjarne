@@ -7,6 +7,8 @@
 #   bjarne task [opts] "desc"       - Run isolated single-task mode
 #   bjarne [n]                      - Run n iterations (default 25)
 #   bjarne --rebuild                - Force rebuild Docker image (safe mode only)
+#   bjarne --disable-auto-update    - Disable automatic update checks
+#   bjarne --enable-auto-update     - Re-enable automatic update checks
 #
 # Task mode options:
 #   --safe              - Run in Docker container
@@ -49,6 +51,120 @@ RETRY_DELAY=10
 # Logging
 LOG_DIR=".bjarne/logs"
 LOG_FILE="$LOG_DIR/bjarne.log"
+
+# Auto-update settings
+BJARNE_CONFIG_DIR="$HOME/.bjarne"
+BJARNE_LAST_UPDATE_CHECK="$BJARNE_CONFIG_DIR/last_update_check"
+BJARNE_UPDATE_DISABLED="$BJARNE_CONFIG_DIR/auto_update_disabled"
+BJARNE_UPDATE_INTERVAL=$((2 * 24 * 60 * 60))  # 2 days in seconds
+BJARNE_REMOTE_URL="https://raw.githubusercontent.com/Dekadinious/bjarne/master/bjarne"
+
+#==============================================================================
+# AUTO-UPDATE FUNCTIONS
+#==============================================================================
+
+# Check for updates (runs every 2 days)
+check_for_updates() {
+    # Skip if auto-update is disabled
+    if [[ -f "$BJARNE_UPDATE_DISABLED" ]]; then
+        return 0
+    fi
+
+    # Create config dir if needed
+    mkdir -p "$BJARNE_CONFIG_DIR"
+
+    local now=$(date +%s)
+
+    # Check if we need to check (every 2 days)
+    if [[ -f "$BJARNE_LAST_UPDATE_CHECK" ]]; then
+        local last_check=$(cat "$BJARNE_LAST_UPDATE_CHECK" 2>/dev/null || echo "0")
+        if (( now - last_check < BJARNE_UPDATE_INTERVAL )); then
+            return 0  # Not time to check yet
+        fi
+    fi
+
+    # Record this check time
+    echo "$now" > "$BJARNE_LAST_UPDATE_CHECK"
+
+    # Get path to this script
+    local script_path
+    script_path=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+
+    # Fetch remote script to temp file
+    local temp_remote=$(mktemp)
+    if ! curl -fsSL "$BJARNE_REMOTE_URL" -o "$temp_remote" 2>/dev/null; then
+        rm -f "$temp_remote"
+        return 0  # Silently fail if can't fetch
+    fi
+
+    # Compare hashes
+    local local_hash=$(sha256sum "$script_path" 2>/dev/null | cut -d' ' -f1)
+    local remote_hash=$(sha256sum "$temp_remote" 2>/dev/null | cut -d' ' -f1)
+
+    if [[ "$local_hash" == "$remote_hash" ]]; then
+        rm -f "$temp_remote"
+        return 0  # Already up to date
+    fi
+
+    # Update available - ask user
+    echo -e "${CYAN}A new version of bjarne is available.${NC}"
+    echo -n "Do you want to update? [y/N] "
+    read -r response
+
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Update skipped.${NC}"
+        rm -f "$temp_remote"
+        return 0
+    fi
+
+    # Perform update
+    echo -e "${CYAN}Updating bjarne...${NC}"
+
+    # Check if we need sudo
+    if [[ -w "$script_path" ]]; then
+        cp "$temp_remote" "$script_path"
+        chmod +x "$script_path"
+    else
+        echo -e "${YELLOW}Need elevated permissions to update ${script_path}${NC}"
+        if ! sudo cp "$temp_remote" "$script_path"; then
+            echo -e "${RED}Update failed - could not write to ${script_path}${NC}"
+            rm -f "$temp_remote"
+            return 1
+        fi
+        sudo chmod +x "$script_path"
+    fi
+
+    rm -f "$temp_remote"
+
+    echo -e "${GREEN}bjarne updated successfully!${NC}"
+    echo -e "${YELLOW}Please re-run your command: bjarne $*${NC}"
+    exit 0
+}
+
+#==============================================================================
+# AUTO-UPDATE TOGGLE COMMANDS
+#==============================================================================
+
+if [[ "$1" == "--disable-auto-update" ]]; then
+    mkdir -p "$BJARNE_CONFIG_DIR"
+    touch "$BJARNE_UPDATE_DISABLED"
+    echo -e "${GREEN}Auto-update disabled.${NC}"
+    echo -e "To re-enable: bjarne --enable-auto-update"
+    exit 0
+fi
+
+if [[ "$1" == "--enable-auto-update" ]]; then
+    rm -f "$BJARNE_UPDATE_DISABLED"
+    echo -e "${GREEN}Auto-update enabled.${NC}"
+    exit 0
+fi
+
+#==============================================================================
+# RUN UPDATE CHECK (before processing commands)
+#==============================================================================
+
+# Pass original args so the exit message can tell user what to re-run
+check_for_updates "$@"
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
@@ -130,6 +246,11 @@ IMAGE_NAME=""
 read -r -d '' PLAN_PROMPT << 'PLAN_EOF' || true
 # PLAN STEP
 
+**IMPORTANT: This is step 1 of 4 in an automated pipeline (PLAN → EXECUTE → REVIEW → FIX).**
+- There is NO human in the loop - your output feeds into the next step
+- Do NOT ask questions or request clarification - work with what you have
+- Be direct and factual - no conversational language needed
+
 You are planning ONE task from TASKS.md.
 
 ## Your Job
@@ -184,6 +305,11 @@ PLAN_EOF
 read -r -d '' EXECUTE_PROMPT << 'EXEC_EOF' || true
 # EXECUTE STEP
 
+**IMPORTANT: This is step 2 of 4 in an automated pipeline (PLAN → EXECUTE → REVIEW → FIX).**
+- There is NO human in the loop - just implement the plan
+- Do NOT ask questions or request approval - execute the plan
+- Be direct and factual - no conversational language needed
+
 Read .task file. Follow the plan exactly.
 
 ## Rules
@@ -211,6 +337,13 @@ EXEC_EOF
 
 read -r -d '' REVIEW_PROMPT << 'REVIEW_EOF' || true
 # REVIEW STEP
+
+**IMPORTANT: This is step 3 of 4 in an automated pipeline (PLAN → EXECUTE → REVIEW → FIX).**
+- There is NO human in the loop - your output feeds directly into the FIX step
+- Do NOT ask questions like "Would you like me to fix this?"
+- Do NOT offer to make changes - just document findings
+- The FIX step will automatically process everything you report
+- Be direct and factual - no conversational language needed
 
 Review implementation against .task plan.
 
@@ -334,6 +467,11 @@ REVIEW_EOF
 
 read -r -d '' FIX_PROMPT << 'FIX_EOF' || true
 # FIX STEP
+
+**IMPORTANT: This is step 4 of 4 in an automated pipeline (PLAN → EXECUTE → REVIEW → FIX).**
+- There is NO human in the loop - fix issues found by REVIEW automatically
+- Do NOT ask questions or request approval - just fix the issues
+- Be direct and factual - no conversational language needed
 
 Read REVIEW_RESULT in .task file. Fix issues by priority.
 
@@ -1121,6 +1259,7 @@ if [[ "$1" == "task" ]]; then
     TASK_SAFE_MODE=false
     TASK_DESCRIPTION=""
     TASK_NO_PR=false
+    TASK_NO_WORKTREE=false
     TASK_MAX_ITERATIONS=25
 
     while [[ $# -gt 0 ]]; do
@@ -1131,6 +1270,10 @@ if [[ "$1" == "task" ]]; then
                 ;;
             --no-pr)
                 TASK_NO_PR=true
+                shift
+                ;;
+            --no-worktree)
+                TASK_NO_WORKTREE=true
                 shift
                 ;;
             -n)
@@ -1151,13 +1294,13 @@ if [[ "$1" == "task" ]]; then
     fi
 
     if [[ -z "$TASK_DESCRIPTION" ]]; then
-        echo -e "${RED}Usage: bjarne task [--safe] [--no-pr] [-n iterations] <description or file.md>${NC}"
+        echo -e "${RED}Usage: bjarne task [--safe] [--no-pr] [--no-worktree] [-n iterations] <description or file.md>${NC}"
         echo ""
         echo "Examples:"
         echo "  bjarne task \"Fix the login button not responding\""
         echo "  bjarne task bugfix.md                      # reads file as task"
         echo "  bjarne task --safe \"Add payment integration\""
-        echo "  bjarne task \"Add OAuth, use branch feature/oauth\"  # branch in description"
+        echo "  bjarne task --no-worktree \"Quick fix\"     # work in current checkout (affects other sessions)"
         exit 1
     fi
 
@@ -1197,12 +1340,69 @@ if [[ "$1" == "task" ]]; then
     task_log "INFO" "Task: $TASK_DESCRIPTION"
     task_log "INFO" "Task ID: $TASK_ID"
 
-    # Track original branch if git available (Claude will handle branch creation)
+    # Track original branch if git available
     ORIGINAL_BRANCH=""
+    ORIGINAL_DIR=$(pwd)
+    WORKTREE_PATH=""
+    WORKTREE_BRANCH=""
+
     if [[ "$HAS_GIT" == "1" ]]; then
         ORIGINAL_BRANCH=$(git rev-parse --abbrev-ref HEAD)
         task_log "INFO" "Starting branch: $ORIGINAL_BRANCH"
+
+        # Create isolated worktree unless --no-worktree flag is set
+        if [[ "$TASK_NO_WORKTREE" != true ]]; then
+            # Generate branch name from task description
+            local first_line=$(echo "$TASK_DESCRIPTION" | grep -v '^#' | grep -v '^$' | head -1)
+            local branch_slug=$(echo "$first_line" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
+            WORKTREE_BRANCH="feature/${branch_slug}"
+            WORKTREE_PATH="/tmp/bjarne-worktree-$TASK_ID"
+
+            echo -e "${CYAN}Creating isolated worktree...${NC}"
+            task_log "INFO" "Creating worktree at $WORKTREE_PATH on branch $WORKTREE_BRANCH"
+
+            # Create worktree with new branch
+            if ! git worktree add "$WORKTREE_PATH" -b "$WORKTREE_BRANCH" 2>/dev/null; then
+                # Branch might already exist, try without -b
+                if ! git worktree add "$WORKTREE_PATH" "$WORKTREE_BRANCH" 2>/dev/null; then
+                    echo -e "${RED}Failed to create worktree - falling back to current checkout${NC}"
+                    task_log "WARN" "Worktree creation failed, using current checkout"
+                    WORKTREE_PATH=""
+                    WORKTREE_BRANCH=""
+                fi
+            fi
+
+            if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
+                echo -e "${GREEN}Working in isolated worktree: $WORKTREE_PATH${NC}"
+                echo -e "${GREEN}Branch: $WORKTREE_BRANCH${NC}"
+                task_log "INFO" "Worktree created successfully"
+
+                # Change to worktree directory
+                cd "$WORKTREE_PATH"
+
+                # Update task directory paths to be absolute (so they work from worktree)
+                TASK_DIR="$ORIGINAL_DIR/.bjarne/tasks/$TASK_ID"
+                TASK_LOG_DIR="$TASK_DIR/logs"
+                TASK_LOG_FILE="$TASK_LOG_DIR/task.log"
+                TASK_SUBTASKS="$TASK_DIR/SUBTASKS.md"
+                TASK_STATE_FILE="$TASK_DIR/.task"
+                TASK_SUMMARY_FILE="$TASK_DIR/summary.md"
+                TASK_ORIGINAL_FILE="$TASK_DIR/TASK.md"
+            fi
+        fi
     fi
+
+    # Cleanup function for worktree
+    cleanup_worktree() {
+        if [[ -n "$WORKTREE_PATH" ]] && [[ -d "$WORKTREE_PATH" ]]; then
+            task_log "INFO" "Cleaning up worktree at $WORKTREE_PATH"
+            cd "$ORIGINAL_DIR"
+            git worktree remove "$WORKTREE_PATH" --force 2>/dev/null || true
+        fi
+    }
+
+    # Trap to cleanup on exit/interrupt
+    trap cleanup_worktree EXIT
 
     # Handle safe mode for task
     if [[ "$TASK_SAFE_MODE" == true ]]; then
@@ -1254,23 +1454,43 @@ $(cat CLAUDE.md)
     echo -e "${BLUE}[DECOMPOSE]${NC} Breaking down task..."
     task_log "INFO" "[DECOMPOSE] Starting..."
 
-    read -r -d '' DECOMPOSE_PROMPT << 'DECOMPOSE_EOF' || true
+    # Build git workflow instructions based on worktree status
+    if [[ -n "$WORKTREE_PATH" ]]; then
+        GIT_WORKFLOW_INSTRUCTIONS="## Git Workflow
+**You are working in an ISOLATED GIT WORKTREE on branch: $WORKTREE_BRANCH**
+- Do NOT create a branch subtask - you're already on the feature branch
+- Do NOT run git checkout or git switch - stay on current branch
+- Just commit your changes during EXECUTE phase
+- PR creation happens at the end (handled by bjarne)
+"
+        GIT_EXAMPLE="- [ ] Add onClick handler to login button → Button calls handleLogin function when clicked"
+    else
+        GIT_WORKFLOW_INSTRUCTIONS="## Git Workflow (if git available)
+1. **First subtask should create a feature branch** (unless task specifies otherwise)
+   - Use branch name from task description if provided
+   - Otherwise use a descriptive name like \`feature/short-description\` or \`fix/short-description\`
+2. Commits happen during EXECUTE phase
+3. PR creation happens at the end (handled by bjarne)
+
+If the task description includes specific git instructions (branch name, workflow), follow those.
+"
+        GIT_EXAMPLE="- [ ] Create feature branch \`feature/login-fix\` → Branch exists and is checked out
+- [ ] Add onClick handler to login button → Button calls handleLogin function when clicked"
+    fi
+
+    read -r -d '' DECOMPOSE_PROMPT_BASE << 'DECOMPOSE_EOF' || true
 # DECOMPOSE TASK
+
+**IMPORTANT: This is the first step of an automated pipeline.**
+- There is NO human in the loop - your output feeds into the task execution loop
+- Do NOT ask questions or request clarification - work with what you have
+- Be direct and factual - no conversational language needed
 
 You are breaking down a task for an autonomous coding agent.
 
 CRITICAL: You are working on an EXISTING project. Do NOT delete any source files,
 configuration files, or project files. Only modify files directly related to this task.
 The project's existing files are NOT bjarne artifacts - do NOT remove them.
-
-## Git Workflow (if git available)
-1. **First subtask should create a feature branch** (unless task specifies otherwise)
-   - Use branch name from task description if provided
-   - Otherwise use a descriptive name like `feature/short-description` or `fix/short-description`
-2. Commits happen during EXECUTE phase
-3. PR creation happens at the end (handled by bjarne)
-
-If the task description includes specific git instructions (branch name, workflow), follow those.
 
 ## Instructions
 1. Explore the codebase to understand the relevant code
@@ -1283,11 +1503,6 @@ Each line must be: `- [ ] Action → Outcome`
 - Action: What to implement (specific, atomic)
 - Outcome: How to verify it worked (must be machine-checkable)
 
-## Examples
-- [ ] Create feature branch `feature/login-fix` → Branch exists and is checked out
-- [ ] Add onClick handler to login button → Button calls handleLogin function when clicked
-- [ ] Test login flow → Clicking login button redirects to /dashboard
-
 ## Output
 Write ONLY the subtask checklist to the SUBTASKS.md file. Nothing else.
 Keep subtasks focused, atomic, and verifiable.
@@ -1298,18 +1513,23 @@ $TASK_DESCRIPTION
 
 ---
 
-$PROJECT_CONTEXT$SPECS_CONTENT$CLAUDE_MD_CONTENT---
+$PROJECT_CONTEXT$SPECS_CONTENT$CLAUDE_MD_CONTENT
+$GIT_WORKFLOW_INSTRUCTIONS
+
+## Examples
+$GIT_EXAMPLE
+- [ ] Test login flow → Clicking login button redirects to /dashboard
+
+---
 
 Write subtasks to: $TASK_SUBTASKS
 
-$DECOMPOSE_PROMPT"
+$DECOMPOSE_PROMPT_BASE"
 
     if ! run_claude "$DECOMPOSE_FULL_PROMPT" "DECOMPOSE"; then
         echo -e "${RED}Decompose phase failed - aborting${NC}"
         task_log "ERROR" "[DECOMPOSE] Failed - aborting"
-        if [[ "$HAS_GIT" == "1" ]] && [[ -n "$ORIGINAL_BRANCH" ]]; then
-            git checkout "$ORIGINAL_BRANCH" 2>/dev/null
-        fi
+        # EXIT trap handles worktree cleanup
         exit 1
     fi
 
@@ -1317,9 +1537,7 @@ $DECOMPOSE_PROMPT"
     if [[ ! -f "$TASK_SUBTASKS" ]]; then
         echo -e "${RED}Error: SUBTASKS.md not created${NC}"
         task_log "ERROR" "[DECOMPOSE] No SUBTASKS.md created"
-        if [[ "$HAS_GIT" == "1" ]] && [[ -n "$ORIGINAL_BRANCH" ]]; then
-            git checkout "$ORIGINAL_BRANCH" 2>/dev/null
-        fi
+        # EXIT trap handles worktree cleanup
         exit 1
     fi
 
@@ -1333,9 +1551,21 @@ $DECOMPOSE_PROMPT"
     # Uses main prompts with task-mode context injection
     #--------------------------------------------------------------------------
 
+    # Build worktree context if in a worktree
+    WORKTREE_CONTEXT=""
+    if [[ -n "$WORKTREE_PATH" ]]; then
+        WORKTREE_CONTEXT="
+**GIT WORKTREE ISOLATION:**
+- You are working in an ISOLATED worktree at: $WORKTREE_PATH
+- Current branch: $WORKTREE_BRANCH
+- Do NOT run \`git checkout\` or \`git switch\` - stay on current branch
+- Just make commits - bjarne handles branch management
+"
+    fi
+
     # Build task mode context header (injected before each prompt)
     TASK_MODE_HEADER="## TASK MODE - Isolated Fix
-
+$WORKTREE_CONTEXT
 **File Mappings (read these instead of defaults):**
 - TASKS.md → $TASK_SUBTASKS
 - .task → $TASK_STATE_FILE
@@ -1458,9 +1688,54 @@ $FIX_PROMPT" "TASK_FIX"; then
     echo -e "${CYAN}[FINALIZE]${NC} Wrapping up task..."
     task_log "INFO" "[FINALIZE] Starting..."
 
-    # Build finalize prompt
-    read -r -d '' FINALIZE_PROMPT << 'FINALIZE_EOF' || true
+    # Build finalize prompt - different based on worktree mode
+    if [[ -n "$WORKTREE_PATH" ]]; then
+        read -r -d '' FINALIZE_PROMPT << FINALIZE_EOF || true
 # FINALIZE TASK
+
+**IMPORTANT: This is the final step of an automated pipeline.**
+- There is NO human in the loop - just complete the finalization
+- Do NOT ask questions or request approval - just do the steps
+- Be direct and factual - no conversational language needed
+
+**GIT WORKTREE MODE:** You are in an isolated worktree on branch: $WORKTREE_BRANCH
+- Do NOT switch branches - bjarne handles cleanup
+- Just commit, push, and create PR
+
+The task loop has completed. Now finalize the work:
+
+## Your Actions
+
+1. **Check git status**
+   - Are there uncommitted changes? If so, commit them.
+   - Are there commits to push?
+
+2. **Push the branch**
+   - Push: \`git push -u origin $WORKTREE_BRANCH\`
+   - If push fails (no remote, auth issues), just note it and continue
+
+3. **Create PR if appropriate**
+   - Only if: pushed successfully and \`gh\` CLI is available
+   - Check if PR already exists: \`gh pr list --head $WORKTREE_BRANCH\`
+   - If no PR exists, create one with a good title and description
+   - Include what was changed and how to test it
+
+4. **Output summary**
+   - List what was accomplished
+   - Note any issues or incomplete items
+   - Include PR URL if created
+
+## Constraints
+- Do NOT run git checkout or git switch - stay on $WORKTREE_BRANCH
+FINALIZE_EOF
+    else
+        read -r -d '' FINALIZE_PROMPT << 'FINALIZE_EOF' || true
+# FINALIZE TASK
+
+**IMPORTANT: This is the final step of an automated pipeline.**
+- There is NO human in the loop - just complete the finalization
+- Do NOT ask questions or request approval - just do the steps
+- Be direct and factual - no conversational language needed
 
 The task loop has completed. Now finalize the work:
 
@@ -1491,6 +1766,7 @@ The task loop has completed. Now finalize the work:
 
 ## Constraints
 FINALIZE_EOF
+    fi
 
     # Add no-pr constraint if flag set
     if [[ "$TASK_NO_PR" == true ]]; then
@@ -1516,7 +1792,8 @@ $(cat "$TASK_SUBTASKS" 2>/dev/null || echo "No subtasks file found")
     fi
 
     # Return to original branch (safety fallback in case Claude didn't)
-    if [[ "$HAS_GIT" == "1" ]]; then
+    # Skip if in worktree - the EXIT trap handles cleanup
+    if [[ "$HAS_GIT" == "1" ]] && [[ -z "$WORKTREE_PATH" ]]; then
         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
         if [[ "$CURRENT_BRANCH" != "$ORIGINAL_BRANCH" ]]; then
             git checkout "$ORIGINAL_BRANCH" 2>/dev/null
