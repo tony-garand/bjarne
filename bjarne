@@ -1352,9 +1352,16 @@ if [[ "$1" == "task" ]]; then
 
         # Create isolated worktree unless --no-worktree flag is set
         if [[ "$TASK_NO_WORKTREE" != true ]]; then
-            # Generate branch name from task description
-            first_line=$(echo "$TASK_DESCRIPTION" | grep -v '^#' | grep -v '^$' | head -1)
-            branch_slug=$(echo "$first_line" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
+            # Generate branch name from task description using Claude (with fallback)
+            branch_slug=""
+            if command -v claude &>/dev/null; then
+                branch_slug=$(echo "$TASK_DESCRIPTION" | head -100 | claude -p "Generate a concise git branch name for this task. Rules: max 40 chars, lowercase, hyphens only, no leading/trailing hyphens, descriptive of the work. Output ONLY the branch name, nothing else." 2>/dev/null | tr -d '[:space:]' | head -c 40)
+            fi
+            # Fallback to simple slug if Claude fails or unavailable
+            if [[ -z "$branch_slug" ]]; then
+                first_line=$(echo "$TASK_DESCRIPTION" | grep -v '^#' | grep -v '^>' | grep -v '^$' | head -1)
+                branch_slug=$(echo "$first_line" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-40)
+            fi
             WORKTREE_BRANCH="feature/${branch_slug}"
             WORKTREE_PATH="/tmp/bjarne-worktree-$TASK_ID"
 
