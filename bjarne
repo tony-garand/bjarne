@@ -5,6 +5,7 @@
 #   bjarne init [--safe] <idea.md>  - Bootstrap project from idea file
 #   bjarne refresh <notes.md>       - Add tasks from freeform notes
 #   bjarne task [opts] "desc"       - Run isolated single-task mode
+#   bjarne push                     - Stash, pull --rebase, push, restore stash
 #   bjarne [opts] [n]               - Run n iterations (default 25)
 #   bjarne --rebuild                - Force rebuild Docker image (safe mode only)
 #   bjarne --disable-auto-update    - Disable automatic update checks
@@ -162,6 +163,39 @@ fi
 if [[ "$1" == "--enable-auto-update" ]]; then
     rm -f "$BJARNE_UPDATE_DISABLED"
     echo -e "${GREEN}Auto-update enabled.${NC}"
+    exit 0
+fi
+
+if [[ "$1" == "push" ]]; then
+    echo -e "${CYAN}Pushing to remote...${NC}"
+
+    # Check if there are unstaged changes that need stashing
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        echo -e "${YELLOW}Stashing local changes...${NC}"
+        git stash
+        STASHED=1
+    else
+        STASHED=0
+    fi
+
+    # Pull with rebase and push
+    if git pull --rebase && git push; then
+        echo -e "${GREEN}Push successful!${NC}"
+    else
+        echo -e "${RED}Push failed${NC}"
+        if [[ $STASHED -eq 1 ]]; then
+            echo -e "${YELLOW}Restoring stashed changes...${NC}"
+            git stash pop
+        fi
+        exit 1
+    fi
+
+    # Restore stashed changes if any
+    if [[ $STASHED -eq 1 ]]; then
+        echo -e "${YELLOW}Restoring stashed changes...${NC}"
+        git stash pop
+    fi
+
     exit 0
 fi
 
@@ -1926,6 +1960,37 @@ $(cat "$TASK_SUBTASKS" 2>/dev/null || echo "No subtasks file found")
         task_log "INFO" "[FINALIZE] Complete"
     fi
 
+    # Ensure push happens reliably (fallback in case Claude's push failed)
+    if [[ "$HAS_GIT" == "1" ]]; then
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+        # Check if there are unpushed commits
+        UNPUSHED=$(git log --oneline @{upstream}..HEAD 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$UNPUSHED" -gt 0 ]]; then
+            echo -e "${CYAN}Pushing $UNPUSHED commit(s)...${NC}"
+
+            # Stash if needed
+            if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+                git stash
+                STASHED=1
+            else
+                STASHED=0
+            fi
+
+            # Pull rebase and push
+            if git pull --rebase 2>/dev/null && git push 2>/dev/null; then
+                echo -e "${GREEN}Push successful${NC}"
+            else
+                echo -e "${YELLOW}Push failed - you may need to push manually${NC}"
+            fi
+
+            # Restore stash
+            if [[ $STASHED -eq 1 ]]; then
+                git stash pop 2>/dev/null
+            fi
+        fi
+    fi
+
     # Return to original branch (safety fallback in case Claude didn't)
     # Skip if in worktree - the EXIT trap handles cleanup
     if [[ "$HAS_GIT" == "1" ]] && [[ -z "$WORKTREE_PATH" ]]; then
@@ -2461,7 +2526,31 @@ $ACTIVE_FIX_PROMPT" "FIX"; then
         exit 1
     fi
 
-    # Push is now handled by Claude at the end of the FIX step (prompts user)
+    # Ensure push happens reliably (fallback in case Claude's push failed)
+    UNPUSHED=$(git log --oneline @{upstream}..HEAD 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$UNPUSHED" -gt 0 ]]; then
+        echo -e "${CYAN}Pushing $UNPUSHED commit(s)...${NC}"
+
+        # Stash if needed
+        if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+            git stash
+            STASHED=1
+        else
+            STASHED=0
+        fi
+
+        # Pull rebase and push
+        if git pull --rebase 2>/dev/null && git push 2>/dev/null; then
+            echo -e "${GREEN}Push successful${NC}"
+        else
+            echo -e "${YELLOW}Push failed - you may need to push manually${NC}"
+        fi
+
+        # Restore stash
+        if [[ $STASHED -eq 1 ]]; then
+            git stash pop 2>/dev/null
+        fi
+    fi
 
     sleep 2
 done
