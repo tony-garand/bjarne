@@ -2526,6 +2526,17 @@ $ACTIVE_FIX_PROMPT" "FIX"; then
         exit 1
     fi
 
+    # Auto-commit any uncommitted changes
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null || [[ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+        echo -e "${CYAN}Committing changes...${NC}"
+        git add -A
+        if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -m "feat: iteration $i changes
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>" 2>/dev/null || true
+        fi
+    fi
+
     # Ensure push happens reliably (fallback in case Claude's push failed)
     UNPUSHED=$(git log --oneline @{upstream}..HEAD 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$UNPUSHED" -gt 0 ]]; then
