@@ -568,6 +568,7 @@ A test suite that always passes because you gutted it is worthless.
 If all fixed + tests pass:
 - Delete .task file
 - Ensure task is marked `- [x]` in TASKS.md (with note if useful)
+- **ASK about pushing** (see below)
 
 If environment issue found:
 - Add remediation task to TASKS.md (see above)
@@ -579,6 +580,12 @@ If TRUE code blocker (rare - only security/data issues with no fix):
 - Unmark task in TASKS.md back to `- [ ]`
 - Add blocker note: `- [ ] Task description ⚠️ Blocked: [reason]`
 - Keep .task file for context
+
+## Push Changes
+At the END of this step, after all fixes are complete and the task is marked done:
+1. Check if there's a GitHub remote: `git remote -v | grep -q github`
+2. If GitHub remote exists and there are unpushed commits, push automatically: `git push`
+3. No need to ask - just push if it's a GitHub repo
 FIX_EOF
 
 #==============================================================================
@@ -1804,20 +1811,7 @@ $FIX_PROMPT" "TASK_FIX"; then
         COMPLETED_NOW=$(grep -c '^\s*- \[x\]' "$TASK_SUBTASKS" 2>/dev/null) || COMPLETED_NOW=0
         task_log "INFO" "Iteration $i complete - $COMPLETED_NOW subtasks done so far"
 
-        # Push commit after successful subtask completion (if in worktree or has remote)
-        if [[ "$HAS_GIT" == "1" ]]; then
-            local_commits=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
-            if [[ "$local_commits" -gt 0 ]]; then
-                echo -e "${CYAN}Pushing $local_commits commit(s)...${NC}"
-                if git push 2>/dev/null; then
-                    echo -e "${GREEN}Pushed successfully${NC}"
-                    task_log "INFO" "Pushed $local_commits commit(s) after subtask completion"
-                else
-                    echo -e "${YELLOW}Push failed (no remote or auth issue) - continuing${NC}"
-                    task_log "WARN" "Push failed after subtask completion"
-                fi
-            fi
-        fi
+        # Push is now handled by Claude at the end of the FIX step (prompts user)
 
         sleep 2
     done
@@ -2467,21 +2461,7 @@ $ACTIVE_FIX_PROMPT" "FIX"; then
         exit 1
     fi
 
-    # Push commit after successful task completion
-    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
-        # Check if there are commits to push
-        local_commits=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
-        if [[ "$local_commits" -gt 0 ]]; then
-            echo -e "${CYAN}Pushing $local_commits commit(s)...${NC}"
-            if git push 2>/dev/null; then
-                echo -e "${GREEN}Pushed successfully${NC}"
-                log "INFO" "Pushed $local_commits commit(s) after task completion"
-            else
-                echo -e "${YELLOW}Push failed (no remote or auth issue) - continuing${NC}"
-                log "WARN" "Push failed after task completion"
-            fi
-        fi
-    fi
+    # Push is now handled by Claude at the end of the FIX step (prompts user)
 
     sleep 2
 done
