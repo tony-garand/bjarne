@@ -787,6 +787,83 @@ generate_task_id() {
     echo "${timestamp}-${slug}"
 }
 
+# Parse session limit message and extract wait time in seconds
+# Returns 0 if session limit detected, sets WAIT_SECONDS variable
+parse_session_limit() {
+    local output="$1"
+    WAIT_SECONDS=0
+
+    # Check for session/rate limit messages
+    if echo "$output" | grep -qiE "(session limit|rate limit|usage limit|try again|wait|hour|minute)"; then
+        # Try to extract time from various formats
+        # Format: "X hours" or "X hour"
+        local hours=$(echo "$output" | grep -oE '[0-9]+\s*hours?' | head -1 | grep -oE '[0-9]+')
+        # Format: "X minutes" or "X minute"
+        local minutes=$(echo "$output" | grep -oE '[0-9]+\s*minutes?' | head -1 | grep -oE '[0-9]+')
+        # Format: "X seconds" or "X second"
+        local seconds=$(echo "$output" | grep -oE '[0-9]+\s*seconds?' | head -1 | grep -oE '[0-9]+')
+        # Format: "HH:MM:SS" or "H:MM:SS" timestamp
+        local timestamp=$(echo "$output" | grep -oE '[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?' | head -1)
+
+        # Calculate total wait time
+        if [[ -n "$hours" ]]; then
+            WAIT_SECONDS=$((WAIT_SECONDS + hours * 3600))
+        fi
+        if [[ -n "$minutes" ]]; then
+            WAIT_SECONDS=$((WAIT_SECONDS + minutes * 60))
+        fi
+        if [[ -n "$seconds" ]]; then
+            WAIT_SECONDS=$((WAIT_SECONDS + seconds))
+        fi
+
+        # If timestamp found and no other time extracted, try to parse it as time until
+        if [[ -n "$timestamp" ]] && [[ $WAIT_SECONDS -eq 0 ]]; then
+            # Parse HH:MM or HH:MM:SS format as target time
+            local target_hour=$(echo "$timestamp" | cut -d: -f1)
+            local target_min=$(echo "$timestamp" | cut -d: -f2)
+            local now_epoch=$(date +%s)
+            local target_epoch=$(date -j -f "%H:%M" "$target_hour:$target_min" +%s 2>/dev/null || date -d "$target_hour:$target_min" +%s 2>/dev/null)
+
+            if [[ -n "$target_epoch" ]]; then
+                WAIT_SECONDS=$((target_epoch - now_epoch))
+                # If negative, it means tomorrow
+                if [[ $WAIT_SECONDS -lt 0 ]]; then
+                    WAIT_SECONDS=$((WAIT_SECONDS + 86400))
+                fi
+            fi
+        fi
+
+        # If we found a limit message but couldn't parse time, default to 1 hour
+        if [[ $WAIT_SECONDS -eq 0 ]] && echo "$output" | grep -qiE "(session limit|rate limit|usage limit)"; then
+            WAIT_SECONDS=3600
+            return 0
+        fi
+
+        # Only return success if we actually found a wait time
+        if [[ $WAIT_SECONDS -gt 0 ]]; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Format seconds into human readable time
+format_duration() {
+    local seconds=$1
+    local hours=$((seconds / 3600))
+    local minutes=$(((seconds % 3600) / 60))
+    local secs=$((seconds % 60))
+
+    if [[ $hours -gt 0 ]]; then
+        printf "%dh %dm %ds" $hours $minutes $secs
+    elif [[ $minutes -gt 0 ]]; then
+        printf "%dm %ds" $minutes $secs
+    else
+        printf "%ds" $secs
+    fi
+}
+
 # Run claude with retry logic (safe mode aware)
 # Usage: run_claude "prompt" "PHASE_NAME"
 run_claude() {
@@ -846,6 +923,38 @@ $(get_verbose_output_rules)"
             echo "$output"
             log "INFO" "$phase phase completed successfully"
             return 0
+        fi
+
+        # Check for session/rate limit - if detected, wait and retry
+        if parse_session_limit "$output"; then
+            local wait_formatted=$(format_duration $WAIT_SECONDS)
+            echo -e "${CYAN}Session limit reached. Waiting $wait_formatted before retrying...${NC}"
+            log "INFO" "Session limit detected. Waiting $WAIT_SECONDS seconds before retry."
+
+            # Add a small buffer (30 seconds) to ensure limit is fully reset
+            local total_wait=$((WAIT_SECONDS + 30))
+
+            # Show countdown every minute for long waits
+            while [[ $total_wait -gt 0 ]]; do
+                local remaining_formatted=$(format_duration $total_wait)
+                echo -ne "\r${YELLOW}  Time remaining: $remaining_formatted   ${NC}"
+
+                if [[ $total_wait -gt 60 ]]; then
+                    sleep 60
+                    total_wait=$((total_wait - 60))
+                else
+                    sleep $total_wait
+                    total_wait=0
+                fi
+            done
+            echo ""
+
+            echo -e "${GREEN}Session limit reset. Retrying $phase phase...${NC}"
+            log "INFO" "Retrying $phase phase after session limit wait"
+
+            # Don't increment attempt counter - this wasn't a real failure
+            # Just continue the loop to retry
+            continue
         fi
 
         # Check for the specific streaming error
@@ -1695,6 +1804,21 @@ $FIX_PROMPT" "TASK_FIX"; then
         COMPLETED_NOW=$(grep -c '^\s*- \[x\]' "$TASK_SUBTASKS" 2>/dev/null) || COMPLETED_NOW=0
         task_log "INFO" "Iteration $i complete - $COMPLETED_NOW subtasks done so far"
 
+        # Push commit after successful subtask completion (if in worktree or has remote)
+        if [[ "$HAS_GIT" == "1" ]]; then
+            local_commits=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
+            if [[ "$local_commits" -gt 0 ]]; then
+                echo -e "${CYAN}Pushing $local_commits commit(s)...${NC}"
+                if git push 2>/dev/null; then
+                    echo -e "${GREEN}Pushed successfully${NC}"
+                    task_log "INFO" "Pushed $local_commits commit(s) after subtask completion"
+                else
+                    echo -e "${YELLOW}Push failed (no remote or auth issue) - continuing${NC}"
+                    task_log "WARN" "Push failed after subtask completion"
+                fi
+            fi
+        fi
+
         sleep 2
     done
 
@@ -2341,6 +2465,22 @@ $ACTIVE_REVIEW_PROMPT" "REVIEW"; then
 $ACTIVE_FIX_PROMPT" "FIX"; then
         echo -e "${RED}Fix phase failed after $MAX_RETRIES retries - aborting${NC}"
         exit 1
+    fi
+
+    # Push commit after successful task completion
+    if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+        # Check if there are commits to push
+        local_commits=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
+        if [[ "$local_commits" -gt 0 ]]; then
+            echo -e "${CYAN}Pushing $local_commits commit(s)...${NC}"
+            if git push 2>/dev/null; then
+                echo -e "${GREEN}Pushed successfully${NC}"
+                log "INFO" "Pushed $local_commits commit(s) after task completion"
+            else
+                echo -e "${YELLOW}Push failed (no remote or auth issue) - continuing${NC}"
+                log "WARN" "Push failed after task completion"
+            fi
+        fi
     fi
 
     sleep 2
